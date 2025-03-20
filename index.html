@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Gráficos con MA200, Zona Fibonacci y % de Diferencia Ordenados (1 año)</title>
+  <!-- Se usa la versión 3.8.0 de Lightweight Charts -->
+  <script src="https://unpkg.com/lightweight-charts@3.8.0/dist/lightweight-charts.standalone.production.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 10px;
+    }
+    h1 {
+      text-align: center;
+    }
+    #charts-container {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+    }
+    .chart-container {
+      background: #f8f8f8;
+      border: 2px solid;
+      padding: 5px;
+      box-sizing: border-box;
+    }
+    .chart-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin: 0 0 5px 0;
+      font-size: 1.1em;
+      padding: 5px;
+    }
+    .diff-span {
+      font-size: 0.8em;
+    }
+    .chart-div {
+      width: 100%;
+      height: 300px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Gráficos con MA200, Zona Fibonacci y % de Diferencia Ordenados (1 año)</h1>
+  <div id="charts-container"></div>
+
+  <script>
+    // Lista de monedas con sus símbolos correspondientes y el símbolo para la API
+    const coins = [
+      { name: "BTC", symbol: "BTCUSDT" },
+      { name: "ETH", symbol: "ETHUSDT" },
+      { name: "XRP", symbol: "XRPUSDT" },
+      { name: "BNB", symbol: "BNBUSDT" },
+      { name: "SOL", symbol: "SOLUSDT" },
+      { name: "ADA", symbol: "ADAUSDT" },
+      { name: "DOGE", symbol: "DOGEUSDT" },
+      { name: "TRX", symbol: "TRXUSDT" },
+      { name: "LINK", symbol: "LINKUSDT" },
+      { name: "TON", symbol: "TONUSDT" },
+      { name: "XLM", symbol: "XLMUSDT" },
+      { name: "HBAR", symbol: "HBARUSDT" }
+    ];
+
+    // Función para obtener datos de Binance (1 año aprox. = 365 días)
+    async function fetchData(symbol) {
+      const url = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=1d&limit=365`;
+      const response = await fetch(url);
+      const data = await response.json();
+      return data.map(item => ({
+        time: item[0] / 1000, // convertir de milisegundos a segundos
+        open: parseFloat(item[1]),
+        high: parseFloat(item[2]),
+        low: parseFloat(item[3]),
+        close: parseFloat(item[4])
+      }));
+    }
+
+    // Función para calcular la MA200 a partir de los precios de cierre
+    function calculateMA(candlesticks, period = 200) {
+      const maData = [];
+      for (let i = 0; i < candlesticks.length; i++) {
+        if (i < period - 1) {
+          maData.push({ time: candlesticks[i].time, value: null });
+        } else {
+          let sum = 0;
+          for (let j = i - period + 1; j <= i; j++) {
+            sum += candlesticks[j].close;
+          }
+          maData.push({ time: candlesticks[i].time, value: sum / period });
+        }
+      }
+      return maData;
+    }
+
+    // Función para dibujar el gráfico para una moneda.
+    // Devuelve una promesa que se resuelve con el contenedor (para reordenarlo luego)
+    async function drawChartForCoin(coin) {
+      // Crear el contenedor del gráfico
+      const container = document.createElement('div');
+      container.classList.add('chart-container');
+
+      // Encabezado con diseño flex: a la izquierda el símbolo y a la derecha el % (inicialmente vacío)
+      const header = document.createElement('div');
+      header.classList.add('chart-header');
+      const coinSymbolSpan = document.createElement('span');
+      coinSymbolSpan.textContent = coin.name;
+      header.appendChild(coinSymbolSpan);
+      const diffSpan = document.createElement('span');
+      diffSpan.classList.add('diff-span');
+      header.appendChild(diffSpan);
+      container.appendChild(header);
+
+      // Div que contendrá el gráfico
+      const chartDiv = document.createElement('div');
+      chartDiv.classList.add('chart-div');
+      container.appendChild(chartDiv);
+
+      // Agregar el contenedor a la grilla
+      document.getElementById('charts-container').appendChild(container);
+
+      // Obtener datos y calcular MA200
+      const candlesticks = await fetchData(coin.symbol);
+      const ma200 = calculateMA(candlesticks, 200);
+
+      // Calcular el mínimo y máximo del año para definir la zona Fibonacci
+      const prices = candlesticks.map(c => c.close);
+      const minPrice = Math.min(...prices);
+      const maxPrice = Math.max(...prices);
+      // Niveles Fibonacci: 38.2% y 61.8% del rango
+      const fibLower = minPrice + 0.382 * (maxPrice - minPrice);
+      const fibUpper = minPrice + 0.618 * (maxPrice - minPrice);
+
+      // Crear el gráfico
+      const chart = LightweightCharts.createChart(chartDiv, {
+        width: chartDiv.offsetWidth,
+        height: chartDiv.offsetHeight,
+        layout: { backgroundColor: '#FFFFFF' }
+      });
+
+      // Agregar la zona Fibonacci como un área series (fondo naranja claro)
+      const fibZoneData = candlesticks.map(point => ({
+        time: point.time,
+        value: fibUpper
+      }));
+      chart.addAreaSeries({
+        topColor: 'rgba(255, 165, 0, 0.2)',
+        bottomColor: 'rgba(255, 165, 0, 0.2)',
+        lineColor: 'rgba(255, 165, 0, 0)',
+        base: fibLower
+      }).setData(fibZoneData);
+
+      // Agregar la serie de velas (sobre la zona Fibonacci)
+      const candleSeries = chart.addCandlestickSeries();
+      candleSeries.setData(candlesticks);
+
+      // Agregar la línea de la MA200
+      const lineSeries = chart.addLineSeries({
+        color: 'blue',
+        lineWidth: 2
+      });
+      const ma200Filtered = ma200.filter(point => point.value !== null);
+      lineSeries.setData(ma200Filtered);
+
+      // Comprobar el último dato para determinar el % de diferencia
+      const lastCandle = candlesticks[candlesticks.length - 1];
+      const lastMA = ma200[ma200.length - 1].value;
+      if (lastMA) {
+        // Calcular la diferencia en porcentaje
+        const diffPercent = ((lastCandle.close - lastMA) / lastMA) * 100;
+        const diffPercentFormatted = diffPercent >= 0 ? `+${diffPercent.toFixed(2)}%` : `${diffPercent.toFixed(2)}%`;
+        diffSpan.textContent = diffPercentFormatted;
+        // Guardamos el valor numérico (en string) en el dataset para ordenar
+        container.dataset.diff = diffPercent.toFixed(2);
+        // Establecer colores según si es negativo o positivo
+        if (diffPercent < 0) {
+          container.style.borderColor = "red";
+          header.style.backgroundColor = "rgba(255, 0, 0, 0.2)";
+        } else {
+          container.style.borderColor = "green";
+          header.style.backgroundColor = "";
+        }
+      } else {
+        container.dataset.diff = "0";
+      }
+      
+      return container;
+    }
+
+    // Inicializa los gráficos y, una vez cargados, reordena todos según el % de diferencia (ascendente)
+    function initCharts() {
+      const chartsContainer = document.getElementById('charts-container');
+      chartsContainer.innerHTML = "";
+      const promises = coins.map(coin => drawChartForCoin(coin));
+      Promise.all(promises).then(containers => {
+        // Ordenar todos los contenedores por el dataset.diff (de menor a mayor)
+        containers.sort((a, b) => parseFloat(a.dataset.diff) - parseFloat(b.dataset.diff));
+        chartsContainer.innerHTML = "";
+        containers.forEach(c => chartsContainer.appendChild(c));
+      });
+    }
+
+    window.addEventListener('load', initCharts);
+  </script>
+</body>
+</html>
