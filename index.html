@@ -2,16 +2,28 @@
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>Gráficos con MA200, Zona Fibonacci y % de Diferencia Ordenados (1 año)</title>
+  <title>Gráficos con Estrategia y Ordenación (1 año)</title>
   <!-- Se usa la versión 3.8.0 de Lightweight Charts -->
   <script src="https://unpkg.com/lightweight-charts@3.8.0/dist/lightweight-charts.standalone.production.js"></script>
   <style>
     body {
       font-family: Arial, sans-serif;
       padding: 10px;
+      position: relative;
     }
     h1 {
       text-align: center;
+      margin-top: 60px;
+    }
+    #strategy-conditions {
+      position: fixed;
+      top: 10px;
+      right: 10px;
+      background: #fff;
+      border: 1px solid #ccc;
+      padding: 10px;
+      font-size: 0.9em;
+      z-index: 1000;
     }
     #charts-container {
       display: grid;
@@ -24,6 +36,12 @@
       padding: 5px;
       box-sizing: border-box;
     }
+    .advice {
+      font-weight: bold;
+      font-size: 1.2em;
+      text-align: center;
+      margin-bottom: 5px;
+    }
     .chart-header {
       display: flex;
       justify-content: space-between;
@@ -35,19 +53,32 @@
     .diff-span {
       font-size: 0.8em;
     }
-    .chart-div {
+    .price-chart {
       width: 100%;
       height: 300px;
     }
   </style>
 </head>
 <body>
-  <h1>Gráficos con MA200, Zona Fibonacci y % de Diferencia Ordenados (1 año)</h1>
+  <!-- Condiciones de estrategia fijas en la parte superior derecha -->
+  <div id="strategy-conditions">
+    <strong>Estrategia:</strong><br>
+    <em>COMPRA</em>: RSI < 30, MACD alcista, SMA50 ≥ SMA200<br>
+    <em>VENTA</em>: RSI > 70, MACD bajista, SMA50 ≤ SMA200<br>
+    De lo contrario: NEUTRAL
+  </div>
+  <h1>Gráficos con Estrategia y Ordenación (1 año)</h1>
   <div id="charts-container"></div>
 
   <script>
-    // Lista de monedas con sus símbolos correspondientes y el símbolo para la API
+    // Lista de monedas (puedes ajustar la lista según necesites)
     const coins = [
+      { name: "AVAX", symbol: "AVAXUSDT" },
+      { name: "SUI", symbol: "SUIUSDT" },
+      { name: "SHIB", symbol: "SHIBUSDT" },
+      { name: "LTC", symbol: "LTCUSDT" },
+      { name: "DOR", symbol: "DOTUSDT" },
+      { name: "BCH", symbol: "BCHUSDT" },
       { name: "BTC", symbol: "BTCUSDT" },
       { name: "ETH", symbol: "ETHUSDT" },
       { name: "XRP", symbol: "XRPUSDT" },
@@ -59,16 +90,24 @@
       { name: "LINK", symbol: "LINKUSDT" },
       { name: "TON", symbol: "TONUSDT" },
       { name: "XLM", symbol: "XLMUSDT" },
-      { name: "HBAR", symbol: "HBARUSDT" }
+      { name: "HBAR", symbol: "HBARUSDT" },
+      { name: "UNI", symbol: "UNIUSDT" },
+      { name: "CAKE", symbol: "CAKEUSDT" },
+      { name: "OM", symbol: "OMUSDT" },
+      { name: "APT", symbol: "APTUSDT" },
+      { name: "PEPE", symbol: "PEPEUSDT" },
+      { name: "ICP", symbol: "ICPUSDT" },
+      { name: "AAVE", symbol: "AAVEUSDT" },
+      { name: "ETC", symbol: "ETCUSDT" },
     ];
 
-    // Función para obtener datos de Binance (1 año aprox. = 365 días)
+    // Función para obtener datos de Binance (1 año ≈ 365 días)
     async function fetchData(symbol) {
       const url = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=1d&limit=365`;
       const response = await fetch(url);
       const data = await response.json();
       return data.map(item => ({
-        time: item[0] / 1000, // convertir de milisegundos a segundos
+        time: item[0] / 1000,
         open: parseFloat(item[1]),
         high: parseFloat(item[2]),
         low: parseFloat(item[3]),
@@ -76,7 +115,24 @@
       }));
     }
 
-    // Función para calcular la MA200 a partir de los precios de cierre
+    // Función para calcular SMA de un array de números
+    function calculateSMA(data, period) {
+      let sma = [];
+      for (let i = 0; i < data.length; i++) {
+        if (i < period - 1) {
+          sma.push(null);
+        } else {
+          let sum = 0;
+          for (let j = i - period + 1; j <= i; j++) {
+            sum += data[j];
+          }
+          sma.push(sum / period);
+        }
+      }
+      return sma;
+    }
+
+    // Función para calcular la MA200 (SMA de 200 periodos) a partir de velas
     function calculateMA(candlesticks, period = 200) {
       const maData = [];
       for (let i = 0; i < candlesticks.length; i++) {
@@ -93,14 +149,87 @@
       return maData;
     }
 
-    // Función para dibujar el gráfico para una moneda.
-    // Devuelve una promesa que se resuelve con el contenedor (para reordenarlo luego)
+    // Función para calcular el RSI (período 14)
+    function calculateRSI(candlesticks, period = 14) {
+      let prices = candlesticks.map(c => c.close);
+      let rsis = [];
+      let gains = 0, losses = 0;
+      for (let i = 1; i <= period; i++) {
+        const change = prices[i] - prices[i - 1];
+        if (change > 0) {
+          gains += change;
+        } else {
+          losses += -change;
+        }
+      }
+      let avgGain = gains / period;
+      let avgLoss = losses / period;
+      rsis[period] = avgLoss === 0 ? 100 : 100 - (100 / (1 + avgGain / avgLoss));
+      for (let i = period + 1; i < prices.length; i++) {
+        const change = prices[i] - prices[i - 1];
+        const gain = change > 0 ? change : 0;
+        const loss = change < 0 ? -change : 0;
+        avgGain = ((avgGain * (period - 1)) + gain) / period;
+        avgLoss = ((avgLoss * (period - 1)) + loss) / period;
+        rsis[i] = avgLoss === 0 ? 100 : 100 - (100 / (1 + avgGain / avgLoss));
+      }
+      return rsis[prices.length - 1];
+    }
+
+    // Función para calcular la EMA
+    function calculateEMA(data, period) {
+      let ema = [];
+      const k = 2 / (period + 1);
+      let sum = 0;
+      for (let i = 0; i < data.length; i++) {
+        if (i < period) {
+          sum += data[i];
+          if (i === period - 1) {
+            ema[i] = sum / period;
+          } else {
+            ema[i] = null;
+          }
+        } else {
+          ema[i] = data[i] * k + ema[i - 1] * (1 - k);
+        }
+      }
+      return ema;
+    }
+
+    // Función para calcular el MACD (EMA12 - EMA26) y su línea de señal (EMA9)
+    function calculateMACD(candlesticks) {
+      let prices = candlesticks.map(c => c.close);
+      let ema12 = calculateEMA(prices, 12);
+      let ema26 = calculateEMA(prices, 26);
+      let macd = [];
+      for (let i = 0; i < prices.length; i++) {
+        if (ema12[i] !== null && ema26[i] !== null) {
+          macd.push(ema12[i] - ema26[i]);
+        } else {
+          macd.push(null);
+        }
+      }
+      let start = macd.findIndex(v => v !== null);
+      if (start === -1) start = 0;
+      let macdSlice = macd.slice(start);
+      let signalSlice = calculateEMA(macdSlice, 9);
+      let fullSignal = new Array(prices.length).fill(null);
+      for (let i = 0; i < signalSlice.length; i++) {
+        fullSignal[start + i] = signalSlice[i];
+      }
+      return { macd: macd, signal: fullSignal };
+    }
+
+    // Función para dibujar el gráfico para una moneda (incluye velas, MA200, líneas máx/mín y consejo)
     async function drawChartForCoin(coin) {
-      // Crear el contenedor del gráfico
       const container = document.createElement('div');
       container.classList.add('chart-container');
 
-      // Encabezado con diseño flex: a la izquierda el símbolo y a la derecha el % (inicialmente vacío)
+      // Div de recomendación
+      const adviceDiv = document.createElement('div');
+      adviceDiv.classList.add('advice');
+
+      // Encabezado: símbolo y porcentajes
       const header = document.createElement('div');
       header.classList.add('chart-header');
       const coinSymbolSpan = document.createElement('span');
@@ -109,94 +238,125 @@
       const diffSpan = document.createElement('span');
       diffSpan.classList.add('diff-span');
       header.appendChild(diffSpan);
+      
+      container.appendChild(adviceDiv);
       container.appendChild(header);
 
-      // Div que contendrá el gráfico
-      const chartDiv = document.createElement('div');
-      chartDiv.classList.add('chart-div');
-      container.appendChild(chartDiv);
+      // Div para el gráfico de precio
+      const priceChartDiv = document.createElement('div');
+      priceChartDiv.classList.add('price-chart');
+      container.appendChild(priceChartDiv);
 
-      // Agregar el contenedor a la grilla
       document.getElementById('charts-container').appendChild(container);
 
-      // Obtener datos y calcular MA200
+      // Obtener datos
       const candlesticks = await fetchData(coin.symbol);
       const ma200 = calculateMA(candlesticks, 200);
+      const ma200Filtered = ma200.filter(point => point.value !== null);
 
-      // Calcular el mínimo y máximo del año para definir la zona Fibonacci
-      const prices = candlesticks.map(c => c.close);
-      const minPrice = Math.min(...prices);
-      const maxPrice = Math.max(...prices);
-      // Niveles Fibonacci: 38.2% y 61.8% del rango
-      const fibLower = minPrice + 0.382 * (maxPrice - minPrice);
-      const fibUpper = minPrice + 0.618 * (maxPrice - minPrice);
+      // Calcular SMA50
+      const closes = candlesticks.map(c => c.close);
+      const sma50Array = calculateSMA(closes, 50);
+      const lastSMA50 = sma50Array[sma50Array.length - 1];
+      const lastSMA200 = ma200Filtered[ma200Filtered.length - 1].value;
 
-      // Crear el gráfico
-      const chart = LightweightCharts.createChart(chartDiv, {
-        width: chartDiv.offsetWidth,
-        height: chartDiv.offsetHeight,
+      // Calcular RSI (14)
+      const lastRSI = calculateRSI(candlesticks, 14);
+
+      // Calcular MACD y detectar cruce
+      const macdData = calculateMACD(candlesticks);
+      const macdArr = macdData.macd;
+      const signalArr = macdData.signal;
+      let bullish = false, bearish = false;
+      let lastIndex = candlesticks.length - 1;
+      let prevIndex = lastIndex - 1;
+      while (prevIndex >= 0 && (macdArr[prevIndex] === null || signalArr[prevIndex] === null)) {
+        prevIndex--;
+      }
+      while (lastIndex >= 0 && (macdArr[lastIndex] === null || signalArr[lastIndex] === null)) {
+        lastIndex--;
+      }
+      if (prevIndex >= 0 && lastIndex >= 0) {
+        bullish = (macdArr[prevIndex] <= signalArr[prevIndex]) && (macdArr[lastIndex] > signalArr[lastIndex]);
+        bearish = (macdArr[prevIndex] >= signalArr[prevIndex]) && (macdArr[lastIndex] < signalArr[lastIndex]);
+      }
+
+      // Determinar consejo según estrategia
+      let advice = "NEUTRAL";
+      if (lastRSI < 30 && bullish && (lastSMA50 >= lastSMA200)) {
+        advice = "COMPRA";
+      } else if (lastRSI > 70 && bearish && (lastSMA50 <= lastSMA200)) {
+        advice = "VENTA";
+      }
+      adviceDiv.textContent = advice;
+      container.dataset.advice = advice;
+
+      // Calcular máximo y mínimo
+      const maxPrice = Math.max(...candlesticks.map(c => c.high));
+      const minPrice = Math.min(...candlesticks.map(c => c.low));
+
+      // Crear el gráfico de precio
+      const chart = LightweightCharts.createChart(priceChartDiv, {
+        width: priceChartDiv.offsetWidth,
+        height: priceChartDiv.offsetHeight,
         layout: { backgroundColor: '#FFFFFF' }
       });
-
-      // Agregar la zona Fibonacci como un área series (fondo naranja claro)
-      const fibZoneData = candlesticks.map(point => ({
-        time: point.time,
-        value: fibUpper
-      }));
-      chart.addAreaSeries({
-        topColor: 'rgba(255, 165, 0, 0.2)',
-        bottomColor: 'rgba(255, 165, 0, 0.2)',
-        lineColor: 'rgba(255, 165, 0, 0)',
-        base: fibLower
-      }).setData(fibZoneData);
-
-      // Agregar la serie de velas (sobre la zona Fibonacci)
       const candleSeries = chart.addCandlestickSeries();
       candleSeries.setData(candlesticks);
 
-      // Agregar la línea de la MA200
-      const lineSeries = chart.addLineSeries({
-        color: 'blue',
-        lineWidth: 2
-      });
-      const ma200Filtered = ma200.filter(point => point.value !== null);
-      lineSeries.setData(ma200Filtered);
+      // Línea MA200 (azul)
+      const maLine = chart.addLineSeries({ color: 'blue', lineWidth: 2 });
+      maLine.setData(ma200Filtered);
 
-      // Comprobar el último dato para determinar el % de diferencia
+      // Línea horizontal para el máximo (naranja, punteada)
+      const maxLine = chart.addLineSeries({
+        color: 'orange',
+        lineWidth: 1,
+        lineStyle: LightweightCharts.LineStyle.Dotted
+      });
+      const maxLineData = candlesticks.map(point => ({ time: point.time, value: maxPrice }));
+      maxLine.setData(maxLineData);
+
+      // Línea horizontal para el mínimo (púrpura, punteada)
+      const minLine = chart.addLineSeries({
+        color: 'purple',
+        lineWidth: 1,
+        lineStyle: LightweightCharts.LineStyle.Dotted
+      });
+      const minLineData = candlesticks.map(point => ({ time: point.time, value: minPrice }));
+      minLine.setData(minLineData);
+
+      // Calcular porcentajes respecto a MA200, máximo y mínimo
       const lastCandle = candlesticks[candlesticks.length - 1];
-      const lastMA = ma200[ma200.length - 1].value;
-      if (lastMA) {
-        // Calcular la diferencia en porcentaje
-        const diffPercent = ((lastCandle.close - lastMA) / lastMA) * 100;
-        const diffPercentFormatted = diffPercent >= 0 ? `+${diffPercent.toFixed(2)}%` : `${diffPercent.toFixed(2)}%`;
-        diffSpan.textContent = diffPercentFormatted;
-        // Guardamos el valor numérico (en string) en el dataset para ordenar
-        container.dataset.diff = diffPercent.toFixed(2);
-        // Establecer colores según si es negativo o positivo
-        if (diffPercent < 0) {
-          container.style.borderColor = "red";
-          header.style.backgroundColor = "rgba(255, 0, 0, 0.2)";
-        } else {
-          container.style.borderColor = "green";
-          header.style.backgroundColor = "";
-        }
+      const diffMA = ((lastCandle.close - lastSMA200) / lastSMA200) * 100;
+      const diffMax = ((lastCandle.close - maxPrice) / maxPrice) * 100;
+      const diffMin = ((lastCandle.close - minPrice) / minPrice) * 100;
+      diffSpan.textContent = `${diffMA.toFixed(2)}% | max: ${diffMax.toFixed(2)}%, min: ${diffMin.toFixed(2)}%`;
+
+      if (diffMA < 0) {
+        container.style.borderColor = "red";
+        header.style.backgroundColor = "rgba(255, 0, 0, 0.2)";
       } else {
-        container.dataset.diff = "0";
+        container.style.borderColor = "green";
+        header.style.backgroundColor = "rgba(0, 128, 0, 0.2)";
       }
       
+      container.dataset.diff = diffMA;
       return container;
     }
 
-    // Inicializa los gráficos y, una vez cargados, reordena todos según el % de diferencia (ascendente)
+    // Inicializa y ordena los gráficos: primero los con consejo COMPRA/VENTA (sin reordenar), luego los NEUTRAL ordenados por diffMA
     function initCharts() {
       const chartsContainer = document.getElementById('charts-container');
       chartsContainer.innerHTML = "";
       const promises = coins.map(coin => drawChartForCoin(coin));
       Promise.all(promises).then(containers => {
-        // Ordenar todos los contenedores por el dataset.diff (de menor a mayor)
-        containers.sort((a, b) => parseFloat(a.dataset.diff) - parseFloat(b.dataset.diff));
+        let groupA = containers.filter(c => c.dataset.advice === "COMPRA" || c.dataset.advice === "VENTA");
+        let groupB = containers.filter(c => c.dataset.advice !== "COMPRA" && c.dataset.advice !== "VENTA");
+        groupB.sort((a, b) => parseFloat(a.dataset.diff) - parseFloat(b.dataset.diff));
+        const finalOrder = groupA.concat(groupB);
         chartsContainer.innerHTML = "";
-        containers.forEach(c => chartsContainer.appendChild(c));
+        finalOrder.forEach(container => chartsContainer.appendChild(container));
       });
     }
 
